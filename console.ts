@@ -21,15 +21,35 @@ const createConsole = (() => {
                 autocomplete: void 0 as unknown as HTMLDivElement
             },
             entries: ConsoleData[] = [],
-            inputHistory: string[] = [];
+            inputHistory = new (class <T> {
+                readonly #backingSet = new Set<T>();
+                #backingArray: T[] = [];
 
-        let computedStyle: CSSStyleDeclaration,
-            style = {
-                get left() { return window.parseInt(computedStyle.left, 10); },
-                get top() { return window.parseInt(computedStyle.top, 10); },
-                get width() { return window.parseInt(computedStyle.width, 10); },
-                get height() { return window.parseInt(computedStyle.height, 10); }
-            };
+                add(element: T) {
+                    const oldSize = this.#backingSet.size;
+                    this.#backingSet.add(element);
+
+                    (this.#backingSet.size != oldSize) && this.#backingArray.unshift(element);
+                }
+
+                clear() {
+                    this.#backingSet.clear();
+                    this.#backingArray = [];
+                }
+
+                filter(predicate: (value: T, index: number) => boolean): T[];
+                filter<U extends T>(predicate: (value: T, index: number) => value is U): U[] {
+                    return this.#backingArray.filter(predicate);
+                }
+            })<string>();
+
+        let computedStyle: CSSStyleDeclaration;
+        const style = {
+            get left() { return window.parseInt(computedStyle.left, 10); },
+            get top() { return window.parseInt(computedStyle.top, 10); },
+            get width() { return window.parseInt(computedStyle.width, 10); },
+            get height() { return window.parseInt(computedStyle.height, 10); }
+        };
 
         dom.mainWrapper = makeElement(
             "div",
@@ -73,7 +93,7 @@ const createConsole = (() => {
                                 )
                             ],
                             {
-                                mousedown(event: MouseEvent) {
+                                mousedown(event) {
                                     computedStyle ??= window.getComputedStyle(dom.mainWrapper);
 
                                     const offsetX = style.left - event.clientX,
@@ -91,7 +111,7 @@ const createConsole = (() => {
                                     function move(e: MouseEvent) {
                                         dom.mainWrapper.style.left = `${position.x = +clamp(e.clientX + offsetX, style.width / 2, window.innerWidth - style.width / 2)}px`;
                                         dom.mainWrapper.style.top = `${position.y = +clamp(e.clientY + offsetY, style.height / 2, window.innerHeight - style.height / 2)}px`;
-                                    };
+                                    }
 
                                     document.addEventListener("mousemove", move);
                                 }
@@ -116,7 +136,10 @@ const createConsole = (() => {
                 dom.autocomplete = makeElement(
                     "div",
                     {
-                        id: "console-autocomplete"
+                        id: "console-autocomplete",
+                        style: {
+                            display: "none"
+                        }
                     }
                 )
             ]
@@ -322,8 +345,9 @@ const createConsole = (() => {
                         args: [""]
                     };
                     const commands: Command[] = [current];
-                    let parserPhase = "cmd" as "cmd" | "args";
-                    let inString = false;
+
+                    let parserPhase = "cmd" as "cmd" | "args",
+                        inString = false;
 
                     const handlers: Record<typeof parserPhase, (char: string) => void> = {
                         cmd(char: string) {
@@ -436,24 +460,105 @@ const createConsole = (() => {
             Console.close();
         });
 
-        dom.input.addEventListener("focus", () => {
-            dom.autocomplete.style.display = "";
+        document.addEventListener("keydown", e => {
+            if (!Console.isOpen) return;
 
-            if (!dom.input.value) {
-                dom.autocomplete.append(
-                    ...inputHistory.map(
-                        entry => makeElement("div", { className: "console-input-history-entry", textContent: entry })
-                    )
-                );
-            }
+            if (!["ArrowDown", "ArrowUp"].includes(e.code)) return;
+
+            navigating = true;
+
+            const direction = e.code == "ArrowDown" ? 1 : -1,
+                nodeLength = autocompleteNodes.length;
+
+            autocompleteNodes[activeIndex ?? 0].blur();
+            autocompleteNodes[
+                activeIndex = activeIndex == undefined ? 0 : ((activeIndex + direction) % nodeLength + nodeLength) % nodeLength
+            ].focus();
         });
+        dom.input.addEventListener("focus", refreshAutocomplete);
+        dom.input.addEventListener("blur", () => navigating || hideAutocomplete());
 
-        dom.input.addEventListener("blur", () => {
+        function generateAutocompleteNode(match: string, text: string) {
+            const [before, after] = match
+                ? (() => {
+                    const indexOf = text.indexOf(match);
+
+                    return [text.substring(0, indexOf), text.substring(indexOf + match.length)];
+                })()
+                : [text, ""];
+
+            return makeElement(
+                "div",
+                {
+                    tabIndex: 0,
+                    className: "console-input-autocomplete-entry"
+                },
+                [
+                    new Text(before),
+                    makeElement("b", { textContent: match }),
+                    new Text(after),
+                ],
+                {
+                    mousedown(event) {
+                        if (event.button) return;
+
+                        navigating = true;
+                    },
+                    click(event) {
+                        if (event.button) return;
+
+                        dom.input.value = text;
+                        dom.input.focus();
+                        navigating = false;
+                    },
+                    keydown(event) {
+                        if (event.code == "Enter") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            event.stopImmediatePropagation();
+
+                            this.dispatchEvent(new MouseEvent("click", { button: 0 }));
+                        }
+                    }
+                }
+            );
+        }
+
+        let autocompleteNodes: HTMLDivElement[] = [],
+            activeIndex: number | undefined,
+            navigating = false;
+        function refreshAutocomplete() {
+            const inputValue = dom.input.value,
+                historyCandidates = inputHistory.filter(s => s.includes(inputValue)),
+                commandCandidates = [...commands.values()].filter(s => s.name.includes(inputValue)).map(v => v.name);
+
+            if (historyCandidates.length + commandCandidates.length) {
+                dom.autocomplete.style.display = "";
+                dom.wrapper.style.borderBottomLeftRadius = "0";
+                dom.wrapper.style.borderBottomRightRadius = "0";
+
+                const historyAutocomplete = historyCandidates.map(generateAutocompleteNode.bind(void 0, inputValue)),
+                    commandAutocomplete = commandCandidates.map(generateAutocompleteNode.bind(void 0, inputValue)),
+                    includeDivider = historyCandidates.length * commandCandidates.length != 0,
+                    nodes = [...historyAutocomplete];
+
+                includeDivider && nodes.push(makeElement("div", { className: "console-autocomplete-divider" }));
+
+                nodes.push(...commandAutocomplete);
+
+                dom.autocomplete.replaceChildren(...autocompleteNodes = nodes);
+            } else hideAutocomplete();
+        }
+
+        function hideAutocomplete() {
             dom.autocomplete.style.display = "none";
+            dom.wrapper.style.borderBottomLeftRadius = "";
+            dom.wrapper.style.borderBottomRightRadius = "";
             dom.autocomplete.innerHTML = "";
-        });
+            activeIndex = undefined;
+        }
 
-        dom.input.addEventListener("change", () => { });
+        dom.input.addEventListener("input", refreshAutocomplete);
 
         dom.input.addEventListener("keypress", event => {
             if (event.key == "Enter") {
@@ -463,8 +568,7 @@ const createConsole = (() => {
 
                 const input = dom.input.value;
                 if (input) {
-                    if (inputHistory.at(-1) !== input)
-                        inputHistory.push(input);
+                    inputHistory.add(input);
 
                     Console.log.raw(`> ${input}`);
 
@@ -474,6 +578,8 @@ const createConsole = (() => {
                         Console.error({ main: "An internal error occurred", detail: `${e}` }, true);
                     }
                     dom.input.value = "";
+
+                    refreshAutocomplete();
                 }
             }
         });

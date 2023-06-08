@@ -47,7 +47,7 @@ function setupInputs(game: Game) {
         if (!event.metaKey) // don't prevent keyboard shortcuts
             event.preventDefault();
 
-        if (event instanceof KeyboardEvent && event.code == "IntlBackslash") {
+        if (event instanceof KeyboardEvent && event.code == "Backquote") {
             // This is hard-coded so that it can never be unbound
             Console.toggle();
         }
