@@ -383,7 +383,6 @@ div.console-autocomplete-divider {
 }
 
 @keyframes fatal-error-cycle {
-
     0%,
     100% {
         filter: hue-rotate(0);

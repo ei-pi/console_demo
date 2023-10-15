@@ -128,7 +128,7 @@ const createConsole = (() => {
                             {
                                 id: "console-input",
                                 autocapitalize: "false",
-                                autocomplete: "false"
+                                autocomplete: "off"
                             }
                         ),
                     ]
@@ -233,8 +233,6 @@ const createConsole = (() => {
                 entry.content[propertyToModify] = sanitizeHTML(message.content);
                 entry.container.appendChild(entry.content);
             } else {
-                const sanitizedHTML = sanitizeHTML(message.content.main);
-
                 entry.content.appendChild(
                     makeElement(
                         "details",
@@ -243,7 +241,7 @@ const createConsole = (() => {
                             makeElement(
                                 "summary",
                                 {
-                                    [propertyToModify]: sanitizedHTML
+                                    [propertyToModify]: sanitizeHTML(message.content.main)
                                 }
                             ),
                             (() => {
